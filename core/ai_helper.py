@@ -1,0 +1,425 @@
+"""AI 大模型配置和调用模块"""
+import json
+import os
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from kivy.utils import platform
+if platform == 'android':
+    from android.storage import app_storage_path
+    _APP_DIR = app_storage_path()
+else:
+    _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+CONFIG_FILE = os.path.join(_APP_DIR, 'ai_config.json')
+
+# 支持的大模型提供商
+PROVIDERS = {
+    'deepseek': {
+        'name': 'DeepSeek',
+        'api_url': 'https://api.deepseek.com/v1/chat/completions',
+        'api_type': 'chat_completions',
+        'models': ['deepseek-chat', 'deepseek-reasoner'],
+    },
+    'doubao': {
+        'name': '豆包(火山引擎)',
+        'api_url': 'https://ark.cn-beijing.volces.com/api/v3/responses',
+        'api_type': 'responses',
+        'models': [
+            'doubao-seed-2-0-pro-260215', 'doubao-seed-2-0-lite-260215',
+            'doubao-seed-2-0-mini-260215', 'doubao-seed-2-0-code-preview-260215',
+            'doubao-seed-character',
+            'doubao-seed-1-6-250715', 'doubao-seed-1-6-lite-250715',
+            'doubao-seed-1-6-flash-250715',
+            'doubao-1-5-pro-32k', 'doubao-1-5-lite-32k',
+        ],
+        'note': '也可填入火山方舟的Endpoint ID（如 ep-xxxxxxxx）',
+    },
+    'openai': {
+        'name': 'OpenAI',
+        'api_url': 'https://api.openai.com/v1/chat/completions',
+        'api_type': 'chat_completions',
+        'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
+    },
+    'zhipu': {
+        'name': '智谱AI',
+        'api_url': 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+        'api_type': 'chat_completions',
+        'models': ['glm-4-plus', 'glm-4-flash', 'glm-4'],
+    },
+    'qwen': {
+        'name': '通义千问',
+        'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        'api_type': 'chat_completions',
+        'models': ['qwen-max', 'qwen-plus', 'qwen-turbo'],
+    },
+}
+
+# 知识库提供商
+KNOWLEDGE_PROVIDERS = {
+    'tencent': {
+        'name': '腾讯知识库',
+        'api_url': 'https://lke.cloud.tencent.com/v1/knowledge/query',
+        'description': '腾讯云大模型知识引擎',
+    },
+    'volcengine': {
+        'name': '火山方舟知识库',
+        'api_url': 'https://ark.cn-beijing.volces.com/api/v3/knowledge/query',
+        'description': '火山引擎方舟知识库服务',
+    },
+}
+
+# 影像诊断查询 prompt
+DIAGNOSIS_PROMPT = """你是一个资深医学影像诊断专家。根据以下信息，给出最有可能的3-5条影像诊断。
+
+检查类型：{exam_type}
+关键征象/关键字：{keywords}
+
+请严格按照以下JSON格式返回，不要包含任何其他文字说明：
+[
+  {{
+    "disease_name": "疾病名称",
+    "confidence": "高/中/低",
+    "imaging_findings": "影像学表现（详细描述该疾病在此检查类型下的典型影像表现）",
+    "report_template": "标准报告模板（完整的影像诊断报告格式）",
+    "differential_diagnosis": "鉴别诊断（需鉴别的疾病及鉴别要点）",
+    "clinical_manifestation": "临床表现（症状、体征等）",
+    "pathophysiology": "病理生理及症状学特征",
+    "treatment": "临床治疗方法"
+  }}
+]
+
+请返回纯JSON数组，不要有markdown代码块标记：
+"""
+
+# 知识库查询 prompt
+KB_DIAGNOSIS_PROMPT = """你是一个资深医学影像诊断专家，请结合知识库中的信息，根据以下检查类型和关键征象给出最有可能的3-5条影像诊断。
+
+检查类型：{exam_type}
+关键征象/关键字：{keywords}
+
+请严格按照以下JSON格式返回，不要包含任何其他文字说明：
+[
+  {{
+    "disease_name": "疾病名称",
+    "confidence": "高/中/低",
+    "imaging_findings": "影像学表现",
+    "report_template": "标准报告模板",
+    "differential_diagnosis": "鉴别诊断",
+    "clinical_manifestation": "临床表现",
+    "pathophysiology": "病理生理及症状学特征",
+    "treatment": "临床治疗方法"
+  }}
+]
+
+请返回纯JSON数组，不要有markdown代码块标记：
+"""
+
+
+def load_config():
+    """加载AI配置"""
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {
+        'provider': 'deepseek',
+        'model': 'deepseek-chat',
+        'api_key': '',
+        'custom_api_url': '',
+    }
+
+
+def load_multi_config():
+    """加载多模型配置（支持配置多个API）"""
+    config = load_config()
+    # 兼容旧配置格式
+    providers = config.get('providers', [])
+    if not providers:
+        # 从单配置迁移
+        single = {
+            'provider': config.get('provider', 'deepseek'),
+            'model': config.get('model', 'deepseek-chat'),
+            'api_key': config.get('api_key', ''),
+            'custom_api_url': config.get('custom_api_url', ''),
+            'enabled': bool(config.get('api_key', '')),
+        }
+        providers = [single]
+    return providers
+
+
+def save_config(config):
+    """保存AI配置"""
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+def _call_llm(api_url, api_key, model, messages, api_type='chat_completions', timeout=90):
+    """调用单个LLM API，返回原始文本
+
+    Args:
+        api_url: API地址
+        api_key: API密钥
+        model: 模型名称
+        messages: 消息列表 [{'role': 'system'|'user'|'assistant', 'content': str}, ...]
+        api_type: API类型 - 'chat_completions' (OpenAI兼容) 或 'responses' (豆包Responses API)
+        timeout: 超时秒数
+    """
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}',
+    }
+
+    if api_type == 'responses':
+        # 豆包 Responses API 格式
+        # 将 messages 转换为 input 格式
+        input_items = []
+        for msg in messages:
+            if msg['role'] == 'system':
+                # system 消息作为 instructions 参数
+                continue
+            content_parts = []
+            if isinstance(msg['content'], str):
+                content_parts.append({
+                    'type': 'input_text',
+                    'text': msg['content'],
+                })
+            else:
+                content_parts = msg['content']
+            input_items.append({
+                'role': msg['role'],
+                'content': content_parts,
+            })
+
+        # 提取 system 消息作为 instructions
+        instructions = ''
+        for msg in messages:
+            if msg['role'] == 'system':
+                instructions = msg['content']
+                break
+
+        payload = {
+            'model': model,
+            'input': input_items,
+        }
+        if instructions:
+            payload['instructions'] = instructions
+    else:
+        # OpenAI Chat Completions 兼容格式
+        payload = {
+            'model': model,
+            'messages': messages,
+            'temperature': 0.3,
+            'max_tokens': 4000,
+        }
+
+    resp = requests.post(api_url, headers=headers, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if api_type == 'responses':
+        # 豆包 Responses API 返回格式
+        # 响应结构: {"output": [...{"type": "message", "content": [...{"type": "output_text", "text": "..."}]}]}
+        output_list = data.get('output', [])
+        text_parts = []
+        for item in output_list:
+            if item.get('type') == 'message':
+                for c in item.get('content', []):
+                    if c.get('type') == 'output_text':
+                        text_parts.append(c.get('text', ''))
+        return '\n'.join(text_parts).strip()
+    else:
+        return data['choices'][0]['message']['content'].strip()
+
+
+def _parse_json_response(content):
+    """解析LLM返回的JSON，清理markdown标记"""
+    if content.startswith('```'):
+        lines = content.split('\n')
+        content = '\n'.join(lines[1:])
+        if content.endswith('```'):
+            content = content[:-3]
+        content = content.strip()
+    return json.loads(content)
+
+
+def call_ai(disease_name, config=None):
+    """调用大模型获取疾病信息，返回字段字典"""
+    if config is None:
+        config = load_config()
+
+    api_key = config.get('api_key', '')
+    if not api_key:
+        raise ValueError('未配置API Key，请在AI配置中设置')
+
+    provider = config.get('provider', 'deepseek')
+    model = config.get('model', '')
+    custom_url = config.get('custom_api_url', '')
+
+    if custom_url:
+        api_url = custom_url
+        api_type = 'chat_completions'
+    elif provider in PROVIDERS:
+        api_url = PROVIDERS[provider]['api_url']
+        api_type = PROVIDERS[provider].get('api_type', 'chat_completions')
+    else:
+        raise ValueError(f'未知的AI提供商: {provider}')
+
+    prompt = DISEASE_PROMPT.format(disease_name=disease_name)
+    messages = [
+        {'role': 'system', 'content': '你是一个专业的医学影像学助手，擅长提供疾病的影像学表现和诊断信息。请始终以纯JSON格式回复，不要包含markdown代码块标记。'},
+        {'role': 'user', 'content': prompt}
+    ]
+    content = _call_llm(api_url, api_key, model, messages, api_type=api_type)
+    return _parse_json_response(content)
+
+
+def call_diagnosis_multi(exam_type, keywords, selected_providers=None, use_knowledge_base=None):
+    """并行调用多个大模型获取影像诊断结果
+
+    Args:
+        exam_type: 检查类型 (CT/X-Ray/MRI/PET-CT)
+        keywords: 关键字
+        selected_providers: 选中的提供商配置列表 [{'provider', 'model', 'api_key', ...}, ...]
+        use_knowledge_base: 知识库配置 {'type': 'tencent'|'volcengine', 'api_key': ..., ...}
+
+    Returns:
+        dict: {provider_name: {'success': bool, 'data': [...], 'error': str}}
+    """
+    if not selected_providers:
+        providers = load_multi_config()
+        selected_providers = [p for p in providers if p.get('enabled') and p.get('api_key')]
+
+    if not selected_providers:
+        raise ValueError('没有可用的AI配置，请先在AI配置中设置API Key')
+
+    results = {}
+
+    def _query_one(provider_config):
+        """查询单个大模型"""
+        name = PROVIDERS.get(provider_config['provider'], {}).get('name', provider_config['provider'])
+        try:
+            api_key = provider_config.get('api_key', '')
+            model = provider_config.get('model', '')
+            custom_url = provider_config.get('custom_api_url', '')
+
+            if custom_url:
+                api_url = custom_url
+                api_type = 'chat_completions'
+            elif provider_config['provider'] in PROVIDERS:
+                api_url = PROVIDERS[provider_config['provider']]['api_url']
+                api_type = PROVIDERS[provider_config['provider']].get('api_type', 'chat_completions')
+            else:
+                return name, {'success': False, 'data': [], 'error': f'未知提供商: {provider_config["provider"]}'}
+
+            # 如果启用了知识库，先查询知识库获取上下文
+            kb_context = ''
+            if use_knowledge_base and use_knowledge_base.get('api_key'):
+                kb_context = _query_knowledge_base(
+                    use_knowledge_base, exam_type, keywords
+                )
+
+            prompt_template = KB_DIAGNOSIS_PROMPT if kb_context else DIAGNOSIS_PROMPT
+            prompt = prompt_template.format(exam_type=exam_type, keywords=keywords)
+            if kb_context:
+                prompt += f'\n\n知识库参考信息：\n{kb_context}'
+
+            messages = [
+                {'role': 'system', 'content': '你是一个资深医学影像诊断专家。请始终以纯JSON数组格式回复，不要包含markdown代码块标记。'},
+                {'role': 'user', 'content': prompt}
+            ]
+            content = _call_llm(api_url, api_key, model, messages, api_type=api_type)
+            data = _parse_json_response(content)
+            if isinstance(data, dict):
+                data = [data]
+            return name, {'success': True, 'data': data, 'error': ''}
+        except Exception as e:
+            return name, {'success': False, 'data': [], 'error': str(e)}
+
+    # 并行查询
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(_query_one, pc): pc for pc in selected_providers}
+        for future in as_completed(futures):
+            try:
+                name, result = future.result()
+                results[name] = result
+            except Exception as e:
+                pc = futures[future]
+                name = PROVIDERS.get(pc['provider'], {}).get('name', pc['provider'])
+                results[name] = {'success': False, 'data': [], 'error': str(e)}
+
+    return results
+
+
+def _query_knowledge_base(kb_config, exam_type, keywords):
+    """查询知识库获取参考信息"""
+    kb_type = kb_config.get('type', 'tencent')
+    api_key = kb_config.get('api_key', '')
+
+    if not api_key:
+        return ''
+
+    try:
+        if kb_type == 'tencent':
+            return _query_tencent_kb(kb_config, exam_type, keywords)
+        elif kb_type == 'volcengine':
+            return _query_volcengine_kb(kb_config, exam_type, keywords)
+    except Exception:
+        return ''
+    return ''
+
+
+def _query_tencent_kb(kb_config, exam_type, keywords):
+    """查询腾讯知识库"""
+    api_url = kb_config.get('api_url', KNOWLEDGE_PROVIDERS['tencent']['api_url'])
+    api_key = kb_config.get('api_key', '')
+    bot_id = kb_config.get('bot_id', '')  # 腾讯知识库应用ID
+
+    if not bot_id:
+        return ''
+
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}',
+    }
+    payload = {
+        'BotId': bot_id,
+        'Query': f'{exam_type} {keywords}',
+        'TopK': 3,
+    }
+    resp = requests.post(api_url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    # 提取知识库返回的文本
+    records = data.get('Records', [])
+    if records:
+        return '\n'.join(r.get('Content', '') for r in records)
+    return data.get('Answer', '')
+
+
+def _query_volcengine_kb(kb_config, exam_type, keywords):
+    """查询火山方舟知识库"""
+    api_url = kb_config.get('api_url', KNOWLEDGE_PROVIDERS['volcengine']['api_url'])
+    api_key = kb_config.get('api_key', '')
+    endpoint_id = kb_config.get('endpoint_id', '')  # 火山方舟推理接入点ID
+    collection_name = kb_config.get('collection_name', '')  # 知识库集合名称
+
+    if not endpoint_id:
+        return ''
+
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}',
+    }
+    payload = {
+        'model': endpoint_id,
+        'messages': [
+            {'role': 'user', 'content': f'请根据知识库信息回答：{exam_type}检查中，{keywords}的影像诊断有哪些？'}
+        ],
+    }
+    if collection_name:
+        payload['knowledge'] = {'collection_name': collection_name}
+
+    resp = requests.post(api_url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get('choices', [{}])[0].get('message', {}).get('content', '')
