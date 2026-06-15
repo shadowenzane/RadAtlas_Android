@@ -52,6 +52,15 @@ jobs:
           pip install --upgrade pip setuptools
           pip install buildozer cython virtualenv
 
+      - name: Accept Android SDK licenses
+        run: |
+          # Pre-accept all Android SDK licenses so sdkmanager doesn't prompt
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
       - name: Build APK with Buildozer (debug)
         run: buildozer android debug
         env:

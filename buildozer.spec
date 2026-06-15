@@ -30,11 +30,13 @@ requirements = python3==3.11.6,kivy==2.3.0,Pillow,cryptography,requests,pyjnius
 # Android 权限
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,CAMERA
 
+# 自动接受 Android SDK 许可证
+android.accept_sdk_license = True
+
 # Android API 级别
 android.api = 33
 android.minapi = 24
-android.ndk = 25b
-android.sdk = 33
+android.ndk = 28c
 
 # 架构
 android.archs = arm64-v8a, armeabi-v7a
