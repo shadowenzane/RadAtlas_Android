@@ -25,7 +25,9 @@ source.exclude_dirs = tests,bin,build,.git,.github,.buildozer,__pycache__,assets
 version = 1.0.0
 
 # 依赖
-requirements = python3==3.11.6,kivy==2.3.0,Pillow,cryptography,requests,pyjnius
+# 注意：python3 版本必须与 p4a 分支的 hostpython3 版本一致
+# p4a master 分支当前 hostpython3 = 3.12.x
+requirements = python3==3.12.10,kivy==2.3.0,Pillow,cryptography,requests,pyjnius
 
 # Android 权限
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,CAMERA
@@ -40,6 +42,9 @@ android.ndk = 28c
 
 # 架构
 android.archs = arm64-v8a, armeabi-v7a
+
+# p4a 分支（master 稳定版，支持 Python 3.12）
+p4a.branch = master
 
 # 图标
 # android.icon = assets/icons/icon.png
@@ -58,6 +63,3 @@ android.allow_backup = True
 
 # 日志级别
 log_level = 2
-
-# 是否使用 p4a 预编译
-# p4a.branch = master

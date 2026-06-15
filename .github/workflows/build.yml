@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install system dependencies
         run: |
@@ -35,26 +35,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-global-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-global-v2-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-global-
+            buildozer-global-v2-
 
       - name: Cache Buildozer Android
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-android-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-android-v2-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-android-
+            buildozer-android-v2-
 
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip setuptools
-          pip install buildozer cython virtualenv
+          pip install buildozer cython==0.29.34 virtualenv
 
       - name: Accept Android SDK licenses
         run: |
-          # Pre-accept all Android SDK licenses so sdkmanager doesn't prompt
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
