@@ -9,17 +9,23 @@ package.name = radatlas
 # 包域名
 package.domain = org.radatlas
 
-# 源码目录
+# 源码目录（包含所有 .py 文件的根目录）
 source.dir = .
 
-# 包含目录
-source.include_exts = py,png,jpg,kv,atlas,ttf,otf,json
+# 包含目录（递归包含子目录中的源码）
+source.include_exts = py,png,jpg,kv,atlas,ttf,otf,json,txt
+
+# 排除不需要的文件
+source.exclude_exts = spec,md,gitignore
+
+# 排除不需要的目录
+source.exclude_dirs = tests,bin,build,.git,.github,.buildozer,__pycache__,assets/icons,assets/fonts
 
 # 应用版本
 version = 1.0.0
 
 # 依赖
-requirements = python3==3.11.6,kivy==2.3.0,Pillow,cryptography,requests
+requirements = python3==3.11.6,kivy==2.3.0,Pillow,cryptography,requests,pyjnius
 
 # Android 权限
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,CAMERA

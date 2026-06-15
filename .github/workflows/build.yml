@@ -1,0 +1,76 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake libtool pkg-config \
+            libltdl-dev libffi-dev libssl-dev \
+            zip unzip openjdk-17-jdk \
+            cmake ninja-build
+
+      - name: Cache Buildozer global
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-global-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-global-
+
+      - name: Cache Buildozer Android
+        uses: actions/cache@v4
+        with:
+          path: .buildozer
+          key: buildozer-android-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-android-
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip setuptools
+          pip install buildozer cython virtualenv
+
+      - name: Build APK with Buildozer (debug)
+        run: buildozer android debug
+        env:
+          BUILDOZER_WARN: 1
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: radatlas-debug-apk
+          path: bin/*.apk
+          retention-days: 30
+
+      - name: Build Release APK (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: buildozer android release
+        env:
+          BUILDOZER_WARN: 1
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      - name: Upload APK to Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/*.apk
