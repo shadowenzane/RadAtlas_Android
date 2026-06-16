@@ -26,8 +26,8 @@ version = 1.0.0
 
 # 依赖
 # 注意：python3 版本必须与 p4a 分支的 hostpython3 版本一致
-# p4a master 分支当前 hostpython3 = 3.12.x
-requirements = python3==3.12.10,kivy==2.3.0,Pillow,cryptography,requests,pyjnius
+# p4a master 分支当前 hostpython3 = 3.14.2
+requirements = python3==3.14.2,kivy==2.3.0,Pillow,cryptography,requests,pyjnius
 
 # Android 权限
 android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,CAMERA
