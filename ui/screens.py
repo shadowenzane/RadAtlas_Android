@@ -220,7 +220,7 @@ class DiseaseDetailScreen(Screen):
         back_btn = Button(text='← 返回', size_hint_x=0.25,
                          background_color=C_BG_PANEL[:3] + (1,),
                          color=C_TEXT_PRIMARY[:3], font_size=sp(14))
-        back_btn.bind(on_press=lambda _: self.manager.current = 'main')
+        back_btn.bind(on_press=lambda _: setattr(self.manager, 'current', 'main'))
         header.add_widget(back_btn)
         self.title_label = Label(text='疾病详情', color=C_TEXT_PRIMARY[:3],
                                 font_size=sp(16), size_hint_x=0.75)
@@ -232,7 +232,7 @@ class DiseaseDetailScreen(Screen):
         self.content = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(8))
         self.content.bind(minimum_height=self.content.setter('height'))
         self.scroll.add_widget(self.content)
-        layout.add_widget(self.content)
+        layout.add_widget(self.scroll)
 
         self.add_widget(layout)
 
